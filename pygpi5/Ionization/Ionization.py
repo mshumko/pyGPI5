@@ -25,8 +25,10 @@ class G4EPP:
         self.data_path = pygpi5.model_dir / "G4data_mono_discretePAD_0degLat.pkl"
         # TODO: Implement automatic download if file is not found. Ask for permission before downloading
         # https://zenodo.org/records/8034275/files/G4data_mono_discretePAD_0degLat.pkl?download=1
-        assert self.data_path.exists(), (f"G4EPP pickle file not found in {self.data_path}. "
-                                         "Download here: https://zenodo.org/records/8034275")
+        assert self.data_path.exists(), (
+            f"G4EPP pickle file not found in {self.data_path}. Download from "
+            f"https://zenodo.org/records/8034275 and place in the data "
+            f"path: {pygpi5.model_dir}.")
         self.D = pickle.load(open(self.data_path, "rb"))
 
         self.internal_weights = None
@@ -461,10 +463,12 @@ class Ionization:
         elif IonizationType == 'Maxwellian':
             # this is slightly different
             # in this case would put in Q0 and E0 for each energy
-            # FangModelMaxwellian(self, Q0,E0, altkm, Hz,MassDensity):
-            for iE in range(len(E)):
-                tmpqz,y,f    = self.FangModel(E[iE],EnergyFlux[iE],altkm,Hz,MassDensity)
-                qZE[:,iE] = tmpqz
+            assert len(E) == 1 and len(EnergyFlux) == 1, (
+                'Only pass in one energy and corresponding EnergyFlux for the Maxwellian model.'
+                )
+            Q0 = EnergyFlux[0]
+            E0 = E[0]
+            qZE[:, 0],_, _ = self.FangModelMaxwellian(Q0,E0,altkm,Hz,MassDensity)
 
         elif IonizationType == 'Fang+Berland':
             for iE in range(len(E)):
