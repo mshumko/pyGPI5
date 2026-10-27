@@ -5,3 +5,4 @@ __pycache__/
 *.o
 *.pyc
 __pycache__/
+pygpi5/Models/*.pkl

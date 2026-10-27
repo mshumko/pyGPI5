@@ -1,8 +1,6 @@
- # coding: utf-8
-
-
 import numpy
-import sys
+import pickle
+import bisect
 
 from scipy.constants import G as G
 from scipy.constants import Boltzmann as kb
@@ -10,7 +8,165 @@ import datetime
 import matplotlib.pyplot as plt
 import scipy.integrate
 
+import pygpi5
 import pygpi5.Models.MSIS as MSIS
+
+class G4EPP:
+    """
+    Implements the Berland+2023 G4EPP model (https://doi.org/10.1029/2023EA002987). 
+    """
+    def __init__(self):
+        self.Earray  = numpy.round(numpy.logspace(numpy.log10(0.250), numpy.log10(10000), 100), 2)
+        self.h       = numpy.arange(0, 500);
+        self.runList = numpy.array([10, 14, 20, 32, 50, 71, 100, 141, 200, 316, 500, 
+                            707, 1000, 1414, 2000, 3162, 5000, 7071, 10000])
+        self.PAlist  = numpy.arange(0, 70+5, 5);
+
+        self.data_path = pygpi5.model_dir / "G4data_mono_discretePAD_0degLat.pkl"
+        # TODO: Implement automatic download if file is not found. Ask for permission before downloading
+        # https://zenodo.org/records/8034275/files/G4data_mono_discretePAD_0degLat.pkl?download=1
+        assert self.data_path.exists(), (f"G4EPP pickle file not found in {self.data_path}. "
+                                         "Download here: https://zenodo.org/records/8034275")
+        self.D = pickle.load(open(self.data_path, "rb"))
+
+        self.internal_weights = None
+        self.internal_flux    = None
+
+
+    def set_internal_weights(self, E, Q):
+        returnArray = numpy.zeros(len(self.runList))
+        
+        # Find where queried energy fits within control energies
+        left_ind = bisect.bisect_left(self.runList, E)
+        
+        if left_ind == 0: # left edge case
+            returnArray[0] = 1.0
+
+        elif left_ind >= len(self.runList) - 1: # right edge case
+            returnArray[-1] = 1.0
+
+        else: # nominal case
+            # Queried energy lies within this interval, 
+            # and find logarithmic percentage between the two points
+            log_weight = numpy.log (E / self.runList[left_ind-1]) /\
+                    numpy.log( self.runList[left_ind] / self.runList[left_ind-1] )
+
+            # Set two adjacent beams to their relative weights
+            returnArray[left_ind-1]   = 1 - log_weight
+            returnArray[left_ind] = log_weight
+
+        # Set the member variables
+        self.internal_weights = returnArray
+        self.internal_flux    = Q / E / 2
+
+    def get_internal_weights(self):
+        if self.internal_weights is None:
+            raise ValueError("Did not set internal weights in G4EPP!")
+        else:
+            return self.internal_weights
+
+    def get_internal_flux(self):
+        if self.internal_flux is None:
+            raise ValueError("Did not set internal flux in G4EPP!")
+        else:
+            return self.internal_flux
+
+    def formGreensFunctionSpectrum(
+            self,
+            energyDistribution,
+            pitchAngleDistribution,
+            flux):
+
+        particle = None
+        dataType = 'ioni'
+
+        testArray = numpy.hstack([energyDistribution, pitchAngleDistribution])
+
+        if (numpy.isnan(testArray)).any():
+            raise ValueError("Nan(s) in inputs!")
+
+        if (numpy.isinf(testArray)).any():
+            raise ValueError("Inf(s) in inputs!")
+
+        # Energy array in eV for convienience
+        energyAbsc = self.runList * 1e3
+
+        # Normalize energy distribution
+        energyDistribution     /= numpy.trapz(energyDistribution, x=energyAbsc)
+
+        # Normalize pitch angle distribution
+        pitchAngleDistribution /= numpy.trapz(pitchAngleDistribution, x=numpy.deg2rad(self.PAlist))
+
+
+        # Compute energy flux Input 
+        # Solid angle calculation
+        int1 = 2 * numpy.pi * numpy.trapz(pitchAngleDistribution * numpy.sin(numpy.deg2rad(self.PAlist)),
+                                    x=numpy.deg2rad(self.PAlist))
+
+        # First moment of energy distribution
+        int2 = numpy.trapz(energyDistribution * energyAbsc,
+                        x=energyAbsc)
+
+        norm = flux * int1 * int2
+
+        data = self.D 
+
+        if dataType == 'ioni':
+            result     = numpy.zeros(500)
+            multFactor = 0.035
+
+        elif dataType == "spectra":
+            result     = numpy.zeros([500, 100])
+            multFactor = 1
+
+        # TODO: make this a matrix multiplication for SPEED
+        # See documentation for explanation of divisive factors in below loop
+        for ind1, ene in enumerate(self.runList):
+            for ind2, pa in enumerate(self.PAlist):
+
+                weight = energyDistribution[ind1] * pitchAngleDistribution[ind2]
+
+                angFactor = (1e5 *  2 * numpy.pi * numpy.cos(numpy.deg2rad(pa)) * multFactor)
+
+                if particle is None:
+
+                    result += weight * (data[('electron', dataType, ene, pa)][0] + \
+                           data[('photon', dataType, ene, pa)][0]/100) / angFactor
+
+                if particle == 'electron':
+
+                    result += weight * data[('electron', dataType, ene, pa)][0] / angFactor
+
+                if particle == 'photon':
+
+                    result += weight * data[('photon', dataType, ene, pa)][0]/100 / angFactor
+
+
+        # (ioni ~ cm^-3 s^-1, spectra ~ keV cm^-2 s^-1 sr^-1 keV^-1)
+        # norm ~ eV / cm^2 / sec
+        return result, norm
+
+
+    def get_ionization_profile(self, altkm):
+       
+        energy_weights = self.get_internal_weights()
+        flux           = self.get_internal_flux()
+
+        result, norm = self.formGreensFunctionSpectrum(
+                                    energy_weights,
+                                    numpy.sin(numpy.deg2rad(self.PAlist)),  # sin PAD
+                                    flux)
+
+        # Normalize to unity
+        result /= numpy.trapz(result, x=1e5 * self.h)
+        
+        # Make it integrate to what it should be
+        result *= (norm/35)
+
+        interp_result = 10**numpy.interp(altkm, self.h, numpy.log10(result), left=-numpy.inf, right=-numpy.inf)
+
+        return interp_result
+
 
 class Ionization:
     """
@@ -101,6 +257,28 @@ class Ionization:
 
         qz = f*Q0/deltaE/Hzcm # equation 3 which is wrong, look in fang 2008, eq2
         return qz, y, f
+
+    def BerlandModel(self, E0, Q0, altkm, Hz, MassDensity):
+        """
+        GB new function here
+        Input:  E = MonoEnergetic Energy (eV)
+                altkm = Altitude (km)
+                Hz (m)
+                Mass Density (kg/m^3)
+        """
+
+        # do all of the conversions here
+        zcm = altkm * (1000.0 * 100.0) # cm
+        EkeV = E0 / 1000. # keV
+        rhoz = MassDensity * ( 1e3 / 1e6 ) # g / cm^3
+        Hzcm = Hz * 100.0
+        deltaE = 0.035 # keV
+        Q0 = Q0 * 6.242e11 / 1000.0 # conversion to keV / cm2 / s
+
+        berland_model = G4EPP()
+        berland_model.set_internal_weights(EkeV, Q0)
+        result = berland_model.get_ionization_profile(altkm)
+        return result 
 
     def FangModelMaxwellian(self, Q0,E0, altkm, Hz,MassDensity):
         """
@@ -254,7 +432,9 @@ class Ionization:
         glon : float
             Geodetic longitude in degrees between 0-360 degrees
         IonizationType : str, optional
-            Type of ionization model to use ('Fang' or 'Maxwellian'). Default is 'Fang'.
+            Type of ionization model to use: 'Fang', 'Maxwellian', or 'Fang+Berland'.
+            The 'Fang+Berland' model uses the Fang model for energies below 10 keV and
+            the Berland model for energies above 10 keV.
 
         Returns
         -------
@@ -271,8 +451,9 @@ class Ionization:
         qZ = numpy.zeros(altkm.shape[0])
         qZsimp = numpy.zeros(altkm.shape[0])
 
+        MassDensity,Hz = self.RunMSISFang(tUnix,glat,glon,altkm=altkm)
+
         if IonizationType == 'Fang':
-            MassDensity,Hz = self.RunMSISFang(tUnix,glat,glon,altkm=altkm)
             for iE in range(len(E)):
                 tmpqz,y,f = self.FangModel(E[iE],EnergyFlux[iE],altkm,Hz,MassDensity)
                 qZE[:,iE] = tmpqz
@@ -280,14 +461,24 @@ class Ionization:
         elif IonizationType == 'Maxwellian':
             # this is slightly different
             # in this case would put in Q0 and E0 for each energy
-            MassDensity,Hz = self.RunMSISFang(tUnix,glat,glon,altkm=altkm)
             # FangModelMaxwellian(self, Q0,E0, altkm, Hz,MassDensity):
             for iE in range(len(E)):
-                tmpqz,y,f = self.FangModelMaxwellian(EnergyFlux[iE],E[iE],altkm,Hz,MassDensity)
+                tmpqz,y,f    = self.FangModel(E[iE],EnergyFlux[iE],altkm,Hz,MassDensity)
                 qZE[:,iE] = tmpqz
 
+        elif IonizationType == 'Fang+Berland':
+            for iE in range(len(E)):
+                if E[iE] < 10 * 1e3:
+                    # Fang model for below 10 keV
+                    tmpqz,y,f = self.FangModel(E[iE], EnergyFlux[iE], altkm, Hz, MassDensity)
+                    qZE[:,iE] = tmpqz
+                else: 
+                    # Berland model starts at 10 keV
+                    tmpqz = self.BerlandModel(E[iE], EnergyFlux[iE], altkm, Hz, MassDensity)
+                    qZE[:,iE] = tmpqz
+
         else:
-            raise ValueError(f"Unknown IonizationType: {IonizationType}. Only 'Fang' or 'Maxwellian' are supported.")
+            raise ValueError(f"Unknown IonizationType: {IonizationType}. Only 'Fang', 'Fang+Berland', or 'Maxwellian' are supported.")
 
         # sum over energy to get the final altitude profile
         # need to multiply by dE
