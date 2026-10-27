@@ -72,9 +72,7 @@ There are both IRI and MSIS wrappers in the ```Models``` directory.  However in 
 For MSIS, we are still using the wrapper I got/update/wrote many years ago, although in the ```Models``` directory the file ```testNewMSISWrapper.py``` uses ```pymsis```.  Further validation is really needed and more carefully implementing, which is a TODO item.   Also, I am still using MSIS00 which is not the most current version of MSIS.
 
 # Paper and Citation
-If you do use the code, please cite the [pyGPI5 Paper](https://www.frontiersin.org/journals/astronomy-and-space-sciences/articles/10.3389/fspas.2022.1028042/full) 
+If you do use the code, please cite the [pyGPI5 Paper](https://www.frontiersin.org/journals/astronomy-and-space-sciences/articles/10.3389/fspas.2022.1028042/full)
 
-
-
-
-
+# Contributors
+Steve Kaeppler, Mike Shumko, Grant Berland
