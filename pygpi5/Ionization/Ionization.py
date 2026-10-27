@@ -92,19 +92,19 @@ class G4EPP:
         energyAbsc = self.runList * 1e3
 
         # Normalize energy distribution
-        energyDistribution     /= numpy.trapz(energyDistribution, x=energyAbsc)
+        energyDistribution     /= numpy.trapezoid(energyDistribution, x=energyAbsc)
 
         # Normalize pitch angle distribution
-        pitchAngleDistribution /= numpy.trapz(pitchAngleDistribution, x=numpy.deg2rad(self.PAlist))
+        pitchAngleDistribution /= numpy.trapezoid(pitchAngleDistribution, x=numpy.deg2rad(self.PAlist))
 
 
         # Compute energy flux Input 
         # Solid angle calculation
-        int1 = 2 * numpy.pi * numpy.trapz(pitchAngleDistribution * numpy.sin(numpy.deg2rad(self.PAlist)),
+        int1 = 2 * numpy.pi * numpy.trapezoid(pitchAngleDistribution * numpy.sin(numpy.deg2rad(self.PAlist)),
                                     x=numpy.deg2rad(self.PAlist))
 
         # First moment of energy distribution
-        int2 = numpy.trapz(energyDistribution * energyAbsc,
+        int2 = numpy.trapezoid(energyDistribution * energyAbsc,
                         x=energyAbsc)
 
         norm = flux * int1 * int2
@@ -158,7 +158,7 @@ class G4EPP:
                                     flux)
 
         # Normalize to unity
-        result /= numpy.trapz(result, x=1e5 * self.h)
+        result /= numpy.trapezoid(result, x=1e5 * self.h)
         
         # Make it integrate to what it should be
         result *= (norm/35)

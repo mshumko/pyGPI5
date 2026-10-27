@@ -1,4 +1,4 @@
-from pathlib import Path
+import pathlib
 from importlib.metadata import version, PackageNotFoundError
 
 try:
@@ -6,7 +6,7 @@ try:
 except PackageNotFoundError:
     __version__ = "unknown"
 
-_PACKAGE_DIR = Path(__file__).resolve().parent
+_PACKAGE_DIR = pathlib.Path(__file__).resolve().parent
 _MODEL_DIR = _PACKAGE_DIR / "Models"
 
 apkp_dir = str(_MODEL_DIR / "AP_KP") + "/"
@@ -17,8 +17,8 @@ _msis_candidates = [
 ]
 _msis_lib = next((p for p in _msis_candidates if p.exists()), _msis_candidates[0])
 msislib_path = str(_msis_lib)
-model_dir = str(_MODEL_DIR) + "/"
-plot_dir = str(_PACKAGE_DIR.parent / "Plots") + "/"
+model_dir = pathlib.Path(str(_MODEL_DIR) + "/")
+plot_dir = pathlib.Path(str(_PACKAGE_DIR.parent / "Plots") + "/")
 
 if not _msis_lib.exists():
     raise FileNotFoundError(
